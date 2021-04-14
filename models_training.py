@@ -1,17 +1,16 @@
-import logging
-import os
 import random
 import re
 from typing import List
 import numpy
+import os
+
+from option_parsers import get_logger
+from settings import Paths, LoggingSettings
+logger = get_logger(LoggingSettings.LOGGING_LEVEL.value, LoggingSettings.OUTPUT_FILE.value,
+                    "models_training")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 from neural_network_structure import get_neural_network
-from parsing_library import get_dataset_for_all_metrics, count_deviation_for_dataset
-from settings import Paths
-
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
-
+from parsing_library import get_datasets_for_all_metrics, count_deviation_for_datasets
 
 
 def retrain_model(data_dir: str, ml_type: str, nodes: int, test_id: str):
@@ -29,8 +28,8 @@ def retrain_model(data_dir: str, ml_type: str, nodes: int, test_id: str):
         "Starting to retrain model for test_id: data_dir: {}, ml_type: {}, nodes: {}, "
         "test_id: {}.".format(data_dir, ml_type, nodes, test_id))
     neural_network = get_neural_network(ml_type)  # gets neural network for concrete ml_type
-    input_data = get_dataset_for_all_metrics(data_dir, ml_type, nodes,
-                                             test_id)  # get data in correct format for ML
+    input_data = get_datasets_for_all_metrics(data_dir, ml_type, nodes,
+                                              test_id)  # get data in correct format for ML
     random.shuffle(input_data)  # shuffle data randomly
     train_data = numpy.array(input_data[int(len(input_data) / 10):])  # split data to train and test
     test_data = numpy.array(input_data[:int(len(input_data) / 10)])
@@ -39,7 +38,7 @@ def retrain_model(data_dir: str, ml_type: str, nodes: int, test_id: str):
                        validation_split=0.1,
                        verbose=1)
     output_data = neural_network.predict(test_data)  # predict data
-    deviations = count_deviation_for_dataset(test_data, output_data)  # count deviation
+    deviations = count_deviation_for_datasets(test_data, output_data)  # count deviation
     threshold = max(deviations) * 1.1
     neural_network.save(Paths.MODEL_PATH.value.format(data_dir, ml_type, nodes, test_id))
     file = open(Paths.THRESHOLD_PATH.value.format(data_dir, ml_type, nodes, test_id), "w")
@@ -67,8 +66,8 @@ def retrain_models_for_nodes(data_dir: str, ml_type: str, nodes: int, test_list:
     if not test_list:
         try:
             test_list = os.listdir(Paths.NODE_DIR.value.format(data_dir, ml_type, nodes))
-        except FileNotFoundError as e:
-            logger.error("Problem occured to get files from directory {}. Which are needed, "
+        except FileNotFoundError as _:
+            logger.error("Problem occurred to get files from directory {}. Which are needed, "
                          "because no nodes specified. Directory probably doesnt exist or wrong"
                          "permissions".format(Paths.ML_TYPE_DIR.value.format(data_dir, ml_type,
                                                                              nodes)))
@@ -105,7 +104,7 @@ def retrain_models_for_ml_type(data_dir: str, ml_type: str, nodes: List[int], te
         try:
             list_with_files = os.listdir(Paths.ML_TYPE_DIR.value.format(data_dir, ml_type))
         except FileNotFoundError:
-            logger.error("Problem occured to get files from directory {}. Which are needed, "
+            logger.error("Problem occurred to get files from directory {}. Which are needed, "
                          "because no nodes specified. Directory probably doesnt exist or wrong"
                          "permissions".format(Paths.ML_TYPE_DIR.value.format(data_dir, ml_type)))
             return False

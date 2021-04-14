@@ -5,15 +5,16 @@
 Tutorial for Ubuntu:
 This tutorial is mainly for Ubuntu, but it should work on other Unix distributions too, just change 
 installation and specific commands for your distribution.
-1. We need to download correct version of Python and install pip to it. \
-`sudo apt-get install python3.6 && python3.6 -m pip install pip`
+1.First install python3.6 to your system(only version of pyton3.6 is supported).
+
+2. We need to download correct version of install pip to it and create venv. Its done by 
+   single command. \
+`sudo make prepare-venv`
    
-2. We create virtual environment and activate it. \
-` virtualenv ml-python && source ml-python/bin/activate`
+3. Activate venv.
+`source venv/bin/activate`
    
-3. We install pcplog and requirements for the tool. \
-`pip3.6 install dist/pcplog-1.0.0-py3-none-any.whl && pip3.6 install -r requirements.in`
-   
+
 # Tutorial in general
 This tool is for anomaly detection in automatized tests from CQE team in the company Red Hat. 
 Tests are executed on the Beaker platform. Then its used pcplog tool from './dist' (which is 
@@ -38,6 +39,9 @@ opts.
 4) We can retrain model for specific test_case, number of nodes, type of data etc. Its taken default
    autoencoder model and data from root folder. Model is then saved in root folder and also 
    threshold is saved for it.
+   
+5) We can get plot picture for concrete PCP output json. Its good for visualization, what we do 
+   we measure and to see example of data for concrete jobs.
    
 I made it like a console application for an easy use and reproducibility, but architecture 
 should be done to adapt for REST API etc.
@@ -76,6 +80,8 @@ really hard for your CPU or GPU and also could be very long. So be free to skip 
 We will only retrain model for testcase_3 and only for cpus metrics. \
 `python3.6 main.py retrain-model -l testcase_3 -d ./data --skip-memory`
 
+Now we can print plots and save them to some file. \
+`python3.6 main.py get-picture -i ./exemplary_data/output_114711.json -o example_picture.svg`
 
 TODO: Last functionality of the tool is to generate output JSON from pcp_archive and metadata 
 files(that JSON files, that are used in other functionality options), we need to generate 

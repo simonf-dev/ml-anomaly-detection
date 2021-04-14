@@ -1,14 +1,16 @@
 import json
-import logging
 import math
 import os
-from typing import List, Dict, TextIO, KeysView
 import pandas as pd
-import jsonpickle
+from option_parsers import get_logger
+from settings import LoggingSettings
+
+logger = get_logger(LoggingSettings.LOGGING_LEVEL.value, LoggingSettings.OUTPUT_FILE.value,
+                    "parsing_library")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+from typing import List, Dict, TextIO, KeysView
 from settings import ConstantValues, InputDataLabels, PlotNames, Result, DataFormat, Order, Paths
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+
 
 class StealError(Exception):
     def __init__(self, message=None):
@@ -39,140 +41,184 @@ class NoDataError(Exception):
 
 
 class FinalDataOutput:
-    def __init__(self, name: str, data: Dict[str, List[float]], result: Result =
-    Result.CORRECT.value):
+    def __init__(self, name: str, data: Dict[str, List[float]],
+                 result: Result = Result.CORRECT.value):
 
-        self.name: str = name
+        self._name: str = name
 
-        self.data: Dict[str, List[float]] = data
+        self._data: Dict[str: List[float]] = data
 
-        self.result: Result = result
+        self._result: Result = result
 
     def get_time(self, time: int) -> float or None:
         try:
-            return self.data[InputDataLabels.TIME.value].index(time)
+            return self._data[InputDataLabels.TIME.value].index(time)
         except:
             return None
 
     def get_value_by_label_and_index(self, label: str, index: int):
-        return self.data[label][index]
+        return self._data[label][index]
 
     def get_values_by_label(self, label: str):
-        return self.data[label]
+        return self._data[label]
 
     def get_values(self):
-        return self.data
+        return self._data
 
     def set_value_on_label_and_index(self, label: str, index: int, value: float):
-        self.data[label][index] = value
+        self._data[label][index] = value
 
     def delete_dataset(self, label: str):
-        del self.data[label]
+        del self._data[label]
+
+    def get_name(self):
+        return self._name
+
+    def get_result(self):
+        return self._result
 
 
 class Plot:
     def __init__(self, label: str, data: str):
-        self.label: str = label
-        self.data: Dict[str, List[float or None]] = parse_single_charts_from_chart_set(data)
-        for metric in self.data:
-            normalize_none_values_from_array(self.data[metric])
+        self._label: str = label
+        self._data: Dict[str, List[float or None]] = parse_single_charts_from_chart_set(data)
+        for metric in self._data:
+            normalize_none_values_from_array(self._data[metric])
 
     def get_time(self, time: int) -> float or None:
         try:
-            return self.data[InputDataLabels.TIME.value].index(time)
+            return self._data[InputDataLabels.TIME.value].index(time)
         except ValueError:
             return None
 
     def get_value_by_label_and_index(self, label: str, index: int) -> float or None:
         try:
-            return self.data[label][int(index)]
+            return self._data[label][int(index)]
         except ValueError:
             return None
 
     def get_values(self) -> Dict[str, List[float or None]]:
-        return self.data
+        return self._data
 
     def get_values_by_label(self, label: str) -> List[float or None]:
-        return self.data[label]
+        return self._data[label]
 
     def set_value_on_label_and_index(self, label: str, index: int, value: float):
-        self.data[label][index] = value
+        self._data[label][index] = value
 
-    def get_labels(self) -> KeysView[str]:
-        return self.data.keys()
+    def get_data_labels(self) -> KeysView[str]:
+        return self._data.keys()
 
     def delete_dataset(self, label: str):
-        del self.data[label]
+        del self._data[label]
+
+    def get_label(self):
+        return self._label
 
 
 class Core:
     def __init__(self, clock: float, cache: float, bogomips: float, label: str):
-        self.label: str = label
-        self.bogomips: float = bogomips
-        self.cache: float = cache
-        self.clock: float = clock
+        self._label: str = label
+        self._bogomips: float = bogomips
+        self._cache: float = cache
+        self._clock: float = clock
+
+    def get_bogomips(self):
+        return self._bogomips
 
 
 class Test:
-    def __init__(self, duration: str or float, id: None or str, name: str, provides: str,
+    def __init__(self, duration: str or float, job_id: None or str, name: str, provides: str,
                  result: str, tags: str,
                  time: int):
-        self.duration: float = float(duration)
-        self.id: None or str = id
-        self.name: str = name
-        self.provides: str = provides
-        self.result: str = result
-        self.tags: str = tags
-        self.time: int = time
+        self._duration: float = float(duration)
+        self._id: None or str = job_id
+        self._name: str = name
+        self._provides: str = provides
+        self._result: str = result
+        self._tags: str = tags
+        self._time: int = time
+
+    def get_id(self):
+        return self._id
+
+    def get_time(self):
+        return self._time
+
+    def get_duration(self):
+        return self._duration
 
 
 class JobMetadata:
-    def __init__(self, job_metadata_dict: dict):
-        self.tests: List[Test] = [
+    def __init__(self, job_metadata_dict=None):
+        self._tests = []
+        self._id = None
+        self._nodes = []
+        if job_metadata_dict is not None:
+            self.init_from_pcp_output(job_metadata_dict)
+
+    def filter_tests(self, test_list: List[str]):
+        test_list = list(map(lambda x: x.strip(), test_list))
+        self._tests = list(filter(lambda x: x.id is not None and x.id.strip() in test_list,
+                                  self._tests))
+
+    def init_from_pcp_output(self, job_metadata_dict: Dict):
+        self._tests: List[Test] = [
             Test(metadata["duration"], metadata["id"], metadata["name"], metadata["provides"],
                  metadata["result"],
                  metadata["tags"], metadata["time"]) for metadata in
             job_metadata_dict["metadata"]["tests"]]
-        self.id: int = job_metadata_dict["id"]
-        self.nodes: List[NodeMetadata] = [NodeMetadata(node_metadata_dict) for node_metadata_dict in
-                                          job_metadata_dict["nodes"]]
+        self._id: int = job_metadata_dict["id"]
+        self._nodes: List[NodeMetadata] = [NodeMetadata(node_metadata_dict) for node_metadata_dict
+                                           in
+                                           job_metadata_dict["nodes"]]
 
-    def filter_tests(self, test_list: List[str]):
-        test_list = list(map(lambda x: x.strip(), test_list))
-        self.tests = list(filter(lambda x: x.id is not None and x.id.strip() in test_list, \
-                                 self.tests))
+    def get_nodes(self):
+        return self._nodes
+
+    def get_tests(self):
+        return self._tests
+
+    def get_id(self):
+        return self._id
 
 
 class NodeMetadata:
     def __init__(self, node_metadata_dict: dict):
-        self.name: str = node_metadata_dict["name"]
-        self.cores: List[Core] = [
+        self._name: str = node_metadata_dict["name"]
+        self._cores: List[Core] = [
             Core(core["clock"], core["cache"], core["bogomips"], core["label"]) for core in
             node_metadata_dict["metadata"]["cores"]]
-        self.physical_memory: float = node_metadata_dict["metadata"]["physical_memory"]
-        self.plots: List[Plot] = []
-        self.valid_data = {}
+        self._physical_memory: float = node_metadata_dict["metadata"]["physical_memory"]
+        self._plots: List[Plot] = []
+        self._valid_data = {}
         for plot in node_metadata_dict["graph"]:
             try:
-                self.plots.append(Plot(plot["label"], plot["data"]))
-                self.valid_data[plot["label"]] = True
+                self._plots.append(Plot(plot["label"], plot["data"]))
+                self._valid_data[plot["label"]] = True
             except NoDataError as e:
-                self.valid_data[plot["label"]] = False
+                self._valid_data[plot["label"]] = False
                 print(e)
 
+    def get_cores(self):
+        return self._cores
 
-def delete_row_with_id(path: str, id: int, index: int) -> None:
+    def get_physical_memory(self):
+        return self._physical_memory
+
+
+def delete_row_with_id(path: str, job_id: int, index: int) -> None:
     """
     Delete row with JOB_ID, so data can be updated or just deleted.
     :param path: Path to file
-    :param id: Id of job that we want to delete data
+    :param job_id: Id of job that we want to delete data
     :param index: Index of JOB id in file.
     """
     if not os.path.exists(path):
         return
     file: TextIO = open(path, "r")
     rows: List[str] = list(
-        filter(lambda x: x.split(",")[index].strip() != str(id), file.readlines()))
+        filter(lambda x: x.split(",")[index].strip() != str(job_id), file.readlines()))
     file.close()
     file = open(path, "w")
     for row in rows:
@@ -182,8 +228,8 @@ def delete_row_with_id(path: str, id: int, index: int) -> None:
 
 def get_core_multiplier(number_of_cores: int) -> float:
     """
-    Additional cores have some "penalization" for their power, this penalization is counted in this function. 3 cores
-    wont count as 3xCPU_POWER but only 2,5xCPU_POWER etc.
+    Additional cores have some "penalization" for their power, this penalization is counted
+    in this function. 3 cores wont count as 3xCPU_POWER but only 2,5xCPU_POWER etc.
     :param number_of_cores: Number of cores from node
     :return: Return core multiplier which is used to edit data in normalization.
     """
@@ -214,7 +260,7 @@ def edit_memory_values_by_hardware(node_metadata: NodeMetadata, value: float):
     :param value: Value of MEM_AVAILABLE metric
     :return: Recounted MEM_AVAILABLE value by HW specs
     """
-    return (ConstantValues.MEM_VALUE.value - node_metadata.physical_memory * (
+    return (ConstantValues.MEM_VALUE.value - node_metadata.get_physical_memory() * (
             1 - value)) / ConstantValues.MEM_VALUE.value
 
 
@@ -233,8 +279,9 @@ def parse_json_parameters(path: str) -> dict or list:
 def interpolate_to_different_timeframe(array_with_values: List[float or None], timeframe: int) -> \
         List[float]:
     """
-    ML needs dataset in same format, so different duration of tests have to be recounted to same time format. This func
-    tion gets list of some length and recount it to length of timeframe paramater
+    ML needs dataset in same format, so different duration of tests have to be recounted to
+    same time format. This function gets list of some length and recount it to length of timeframe
+    parameter.
     :param array_with_values: Array which will be recounted to timeframe length
     :param timeframe: Len of the output
     :return: List of length timeframe with recounted data
@@ -270,7 +317,7 @@ def parse_single_charts_from_chart_set(string_with_values: str) -> Dict[str, Lis
     dict_with_charts: Dict[str, List[float or None]] = {}
     parsed_string_to_rows: List[str] = string_with_values.strip().split("\n")[:-1]
     labels: List[str] = parsed_string_to_rows[0].split(" ")
-    label_values: List[List[float or None]] = [[] for i in range(len(labels))]
+    label_values: List[List[float or None]] = [[] for _ in range(len(labels))]
     for row_index in range(1, len(parsed_string_to_rows)):
         values: List[str] = parsed_string_to_rows[row_index].split(" ")
         for value_index in range(len(values)):
@@ -286,7 +333,7 @@ def parse_single_charts_from_chart_set(string_with_values: str) -> Dict[str, Lis
 def clean_output_from_variable_plots(pcp_output: dict) -> None:
     """
     Clean input with job information from plots with variable length of columns and value datasets.
-    :param pcp_output: JSON with beaker job informations as dict, from which are extracted variable length plots.
+    :param pcp_output: JSON with beaker job information as dict, from which are extracted variable length plots.
     """
     for node in pcp_output["nodes"]:
         node["graph"] = [plot for plot in node["graph"] if plot["label"] == PlotNames.CPUS.value]
@@ -295,7 +342,7 @@ def clean_output_from_variable_plots(pcp_output: dict) -> None:
 def extract_mem_ava_to_single_plot(pcp_output: dict) -> None:
     """
     Extract mem_ava columns from cpu plot to single plot.
-    :param pcp_output: SON with beaker job informations as dict, which is edited and added new plot with mem_ava values
+    :param pcp_output: SON with beaker job information as dict, which is edited and added new plot with mem_ava values
     """
     for node in pcp_output["nodes"]:
         for plot in node["graph"]:
@@ -340,14 +387,14 @@ def normalize_none_values_from_array(value_list: List[float or None]) -> None:
 
 def get_minimum_and_maximum(job_metadata: JobMetadata, label: str) -> (int, int):
     """
-    Get minimum and maximum time of plots with label which is gived as parameter
+    Get minimum and maximum time of plots with label which is given as parameter
     :param job_metadata: Job metadata with all plots and data from job from beaker
     :param label: Label of plots, that we want minimum and maximum for
     :return: Return minimum and maximum in format (int,int)
     """
     minimum, maximum = math.inf, -math.inf
-    for node in job_metadata.nodes:
-        plot = next(x for x in node.plots if x.label == label)
+    for node in job_metadata.get_nodes():
+        plot = next(x for x in node.plots if x.get_label() == label)
         minimum, maximum = min(minimum,
                                plot.get_value_by_label_and_index(InputDataLabels.TIME.value,
                                                                  0)), max(
@@ -368,8 +415,9 @@ def output_memory_available_data(job_metadata: JobMetadata) -> Dict[str, List[fl
     for time in range(minimum, maximum + 1):
         count = 0
         value = 0
-        for node in job_metadata.nodes:
-            plot = next(plot for plot in node.plots if plot.label == PlotNames.MEM_AVAILABLE.value)
+        for node in job_metadata.get_nodes():
+            plot = next(
+                plot for plot in node.plots if plot.get_label() == PlotNames.MEM_AVAILABLE.value)
             time_index = plot.get_time(time)
             if time_index is not None:
                 count += 1
@@ -399,8 +447,8 @@ def output_cpu_data(job_metadata: JobMetadata) -> Dict[str, List[float]]:
                    InputDataLabels.SYSTEM.value: [],
                    InputDataLabels.IDLE.value: [], InputDataLabels.USER.value: []}
 
-    for node in job_metadata.nodes:
-        plot = next(plot for plot in node.plots if plot.label == PlotNames.CPUS.value)
+    for node in job_metadata.get_nodes():
+        plot = next(plot for plot in node.plots if plot.get_label() == PlotNames.CPUS.value)
         remove_steal_values(InputDataLabels.IDLE.value, InputDataLabels.STEAL.value, plot)
         plot.delete_dataset(InputDataLabels.STEAL.value)
 
@@ -410,28 +458,29 @@ def output_cpu_data(job_metadata: JobMetadata) -> Dict[str, List[float]]:
         temporary_dict = {InputDataLabels.KSMD.value: 0,
                           InputDataLabels.SYSTEM.value: 0,
                           InputDataLabels.IDLE.value: 0, InputDataLabels.USER.value: 0}
-        for node in job_metadata.nodes:
-            plot = next(plot for plot in node.plots if plot.label == PlotNames.CPUS.value)
+        for node in job_metadata.get_nodes():
+            plot = next(plot for plot in node.plots if plot.get_label() == PlotNames.CPUS.value)
             time_index = plot.get_time(time)
             if time_index is not None:
                 cpu_sum: float = 0
                 cpu_base: float = plot.get_value_by_label_and_index(InputDataLabels.IDLE.value,
                                                                     time_index)
                 count += 1
-                for label in plot.get_labels():
+                for label in plot.get_data_labels():
                     if label != InputDataLabels.IDLE.value and label != InputDataLabels.TIME.value:
                         cpu_base += plot.get_value_by_label_and_index(label, time_index)
                         power_index = 1
                         plot.set_value_on_label_and_index(label, time_index,
-                                                          power_index * plot.get_value_by_label_and_index(
+                                                          power_index *
+                                                          plot.get_value_by_label_and_index(
                                                               label,
                                                               time_index))
                         cpu_sum += plot.get_value_by_label_and_index(label, time_index)
                 plot.set_value_on_label_and_index(InputDataLabels.IDLE.value, time_index,
                                                   cpu_base - cpu_sum)
-                for key in plot.get_labels():
+                for key in plot.get_data_labels():
                     if key != InputDataLabels.TIME.value:
-                        temporary_dict[key] += plot.get_value_by_label_and_index(key,time_index)
+                        temporary_dict[key] += plot.get_value_by_label_and_index(key, time_index)
         for key in temporary_dict.keys():
             output_dict[key].append(temporary_dict[key] / count)
 
@@ -445,10 +494,10 @@ def get_cpu_power_index(node_metadata: NodeMetadata) -> float:
     :return: Index which is used to edit data about tests
     """
     final_index: float = 0
-    multiplier: float = get_core_multiplier(len(node_metadata.cores))
-    for core in node_metadata.cores:
-        final_index += core.bogomips
-    return (final_index / len(node_metadata.cores)) * multiplier
+    multiplier: float = get_core_multiplier(len(node_metadata.get_cores()))
+    for core in node_metadata.get_cores():
+        final_index += core.get_bogomips()
+    return (final_index / len(node_metadata.get_cores())) * multiplier
 
 
 def remove_steal_values(idle_label: str, steal_label: str, plot: Plot) -> None:
@@ -474,17 +523,28 @@ def remove_steal_values(idle_label: str, steal_label: str, plot: Plot) -> None:
 
 
 def get_parsed_data_by_test(final_output: FinalDataOutput, job_metadata: JobMetadata):
+    """
+    This function gets datasets for concrete pcp_output and concrete type of data('cpus' or
+    'mem_available') and removes Time values, parse datasets by testcases and returns it as
+    dictionary.
+    :param final_output: FinalOutput structure with data for concrete type of datasets for
+    concrete job.
+    :param job_metadata: JobMetadata structure with information about pcp_output.
+    :return: Parsed data by testcases. -> {'testcase_2' : {'mem_ava_alert':[0.58,0.59] },
+                                           'testcase_3' : {'mem_ava_alert':[0.63,0.29] }
+                                           }
+    """
     result_output = {}
-    for test in job_metadata.tests:
-        if test.id is not None:
-            result_output[test.id] = {}
-            time_index = final_output.get_time(int(test.time))
-            duration = int(test.duration)
+    for test in job_metadata.get_tests():
+        if test.get_id() is not None:
+            result_output[test.get_id()] = {}
+            time_index = final_output.get_time(int(test.get_time()))
+            duration = int(test.get_duration())
             for key in final_output.get_values():
                 if key != InputDataLabels.TIME.value and duration > 5:
                     values = final_output.get_values_by_label(key)[time_index:time_index + duration]
                     interpolated_values = interpolate_to_different_timeframe(values, 1000)
-                    result_output[test.id][key] = interpolated_values
+                    result_output[test.get_id()][key] = interpolated_values
     return result_output
 
 
@@ -492,27 +552,30 @@ def write_data(final_output: FinalDataOutput, job_metadata: JobMetadata, output_
     """
     Gets final_output with data to write. Creates needed directories, files and write data in some hierarchy.
     :param final_output: Output with data to be written.
-    :param job_metadata: Metadata with all informations about beaker job.
+    :param job_metadata: Metadata with all information about beaker job.
+    :param output_dir: Root directory with data for ML.
     """
-    path: str = "{}/{}/{}node".format(output_dir, final_output.name, len(job_metadata.nodes))
+    path: str = Paths.NODE_DIR.value.format(output_dir, final_output.get_name(),
+                                            len(job_metadata.get_nodes()))
     create_directories_recursive(path)
 
-    for test in job_metadata.tests:
-        if test.id is not None:
-            time_index = final_output.get_time(int(test.time))
-            duration = int(test.duration)
+    for test in job_metadata.get_nodes():
+        if test.get_id() is not None:
+            time_index = final_output.get_time(int(test.get_time()))
+            duration = int(test.get_duration())
             for key in final_output.get_values():
-                create_directories_recursive("{}/{}".format(path, test.id))
+                create_directories_recursive("{}/{}".format(path, test.get_id()))
                 if key != InputDataLabels.TIME.value and duration > 5:
                     values = final_output.get_values_by_label(key)[time_index:time_index + duration]
 
                     interpolated_values = interpolate_to_different_timeframe(values, 1000)
-                    create_labels("{}/{}/{}".format(path, test.id, key))
-                    delete_row_with_id("{}/{}/{}".format(path, test.id, key), job_metadata.id, -2)
+                    create_labels("{}/{}/{}".format(path, test.get_id(), key))
+                    delete_row_with_id("{}/{}/{}".format(path, test.get_id(), key),
+                                       job_metadata.get_id(), -2)
 
-                    file = open("{}/{}/{}".format(path, test.id, key), "a")
+                    file = open("{}/{}/{}".format(path, test.get_id(), key), "a")
                     file.write(",".join(list(map(lambda x: str(x), interpolated_values))))
-                    file.write(",{},{}\n".format(job_metadata.id, final_output.result))
+                    file.write(",{},{}\n".format(job_metadata.get_id(), final_output.get_result()))
                     file.close()
 
 
@@ -529,13 +592,24 @@ def delete_driver_from_input(input_json):
 
 
 def check_if_valid(label: str, job_metadata: JobMetadata) -> bool:
-    for node in job_metadata.nodes:
+    """
+    Gets job_metadata and label, checks if job_metadata contains data with that label. Returns
+    True if yes, else returns False
+    :param label: Label of data that we want to check.
+    :param job_metadata: JobMetadata structure.
+    :return: True if job_metadata contains data with label, else False.
+    """
+    for node in job_metadata.get_nodes():
         if not node.valid_data[label]:
             return False
     return True
 
 
 def create_labels(path: str):
+    """
+    This function creates file in path and writes labels. If file already exists, does nothing.
+    :param path: Path to file that we want to create and create labels in.
+    """
     if not os.path.exists(path):
         file = open(path, "w")
         for x in range(1, DataFormat.ROW_NUMBER.value + 1):
@@ -544,18 +618,41 @@ def create_labels(path: str):
         file.close()
 
 
-def get_data_from_file(path: str, result) -> pd.DataFrame:
+def get_data_from_file(path: str, result: Result) -> pd.DataFrame:
+    """
+    This function gets path to file with datasets and result that we want to get. Then returns
+    all datasets filtered by result. Column with result is dropped.
+    :param path: Path to file with datasets
+    :param result: Result of datasets that we want to get
+    :return: Datasets without column Result
+             -> [ [ 0.2, 0.01,10000], [ 0.2, 0.1, 10001 ] ]
+    """
     dataset = pd.read_csv(path)
     has_value_as_param = dataset['Result'] == result
     dataset = dataset[has_value_as_param]
     dataset = dataset.drop('Result', axis=1)
+
     return dataset
 
 
-def get_dataset_for_all_metrics(data_dir: str, ml_type: str, nodes: int, test_id: str):
-    new_dataset = pd.DataFrame()
+def get_datasets_for_all_metrics(data_dir: str, ml_type: str, nodes: int, test_id: str):
+    """
+    This functions get root dir with datasets, type of dataset, number of nodes and testcase id.
+    Then gets data from all metrics for concrete type of dataset and returns them in some predefined
+    way as nested list.
+    :param data_dir: Path to root dir with data and models for ML analysis.
+    :param ml_type: Type of datasets -> 'cpus'
+    :param nodes: Number of nodes -> 2
+    :param test_id: TestCase id -> 'testcase_1'
+    :return: Datasets for entered parameters
+             -> [ [ [0.1, 0.2], [0.01, 0.9] ], [ [0.2, 0.4],[0.1, 0.7] ] ]
+    """
+    new_dataset = pd.DataFrame()  # we initiate new pd dataframe
 
-    for metric in Order.order.value[ml_type]:
+    for metric in Order.ORDER.value[ml_type]:
+        # we gets data from the single files for all dimensions(1 dimension is 1 metric),
+        # we have to check, if is dataset empty so we can initiate new files or just merge with
+        # existing ones, we join dimensions on ID
         if new_dataset.empty:
             new_dataset = get_data_from_file(
                 Paths.DATA_FILE.value.format(data_dir, ml_type, nodes, test_id,
@@ -568,11 +665,13 @@ def get_dataset_for_all_metrics(data_dir: str, ml_type: str, nodes: int, test_id
                 metric),
                 Result.CORRECT.value),
                 on="ID")
-    new_dataset = new_dataset.drop('ID', axis=1)
-    list_value = list(new_dataset.values)
+    list_value = list(new_dataset.values)  # we convert Dataframe to list
+    # we gets datasets in concat format, so we need to connect dimensions and edit format of dataset
+    # each point from the datasets is now represented by list instead of float, list has all point
+    # dimension in format set in settings file
     for row_index in range(len(list_value)):
         new_row_value = []
-        for column_index in range(int(len(list_value[row_index]) / len(Order.order.value[
+        for column_index in range(int(len(list_value[row_index]) / len(Order.ORDER.value[
                                                                            ml_type]))):
             new_row_value.append([list_value[row_index][x] for x in range(column_index,
                                                                           len(list_value[
@@ -583,6 +682,12 @@ def get_dataset_for_all_metrics(data_dir: str, ml_type: str, nodes: int, test_id
 
 
 def count_deviation_for_point(x_list: List[float], y_list: List[float]) -> float:
+    """
+    This function gets 2 points and returns deviation between them. Points are multidimensional.
+    :param x_list: First point -> [0.1, 0.2]
+    :param y_list: Second point -> [0.1, 0.2]
+    :return: Deviation -> 0
+    """
     constant = 0
     for index in range(len(x_list)):
         constant += (x_list[index] - y_list[index]) ** 2
@@ -590,69 +695,72 @@ def count_deviation_for_point(x_list: List[float], y_list: List[float]) -> float
 
 
 def count_deviation_for_row(x_list: List[List[float]], y_list: List[List[float]]) -> float:
+    """
+    This function gets 2 datasets and returns deviation between them.
+    :param x_list: First dataset -> [ [0.1, 0.2], [0.01, 0.9] ]
+    :param y_list: Second dataset -> [ [0.1, 0.2], [0.01, 0.9] ],
+    :return: Deviation between datasets -> 0
+    """
     deviation_list = []
     for index in range(len(x_list)):
         deviation_list.append(count_deviation_for_point(x_list[index], y_list[index]))
     return sum(deviation_list) / len(deviation_list)
 
 
-def count_deviation_for_dataset(x_list: List[List[List[float]]], y_list: List[List[List[float]]]) \
+def count_deviation_for_datasets(x_list: List[List[List[float]]], y_list: List[List[List[float]]]) \
         -> List[float]:
+    """
+    This function gets 2 datasets and returns list of deviations between entry
+    datasets.
+    :param x_list: First list of datasets
+    -> [ [ [0.1, 0.2], [0.01, 0.9] ], [ [0.2, 0.4],[0.1, 0.7] ] ]
+    :param y_list: Second list of datasets
+    -> [ [ [0.1, 0.2], [0.01, 0.9] ], [ [0.2, 0.4],[0.1, 0.7] ] ]
+    :return: List of deviations, len is number of rows from datasets -> [0.05, 0.02]
+    """
     deviation_list = []
     for index in range(len(x_list)):
         deviation_list.append(count_deviation_for_row(x_list[index], y_list[index]))
     return deviation_list
 
 
-class ML_metadata():
-    def __init__(self, job_id):
-        self.job_id = job_id
-        self.test_results = []
-
-    def add_result(self, test_id, label, correct_result=False, valid=None, threshold=None,
-                   result_value=None):
-        self.test_results.append(
-            ML_test_metadata(test_id, label, correct_result, valid, threshold,
-                             result_value))
-
-    def as_json(self):
-        return jsonpickle.encode(self, unpicklable=False)
-
-    def as_nice_string(self) -> str:
-        return_string = "ML output for job with ID:\n"
-        for test_result in self.test_results:
-            return_string += test_result.as_nice_string()
-        return return_string
+def get_id_from_beaker_results_file(path: str) -> int:
+    """
+    Return job id from beaker metadata file.
+    :param path: Path to file which is in beaker results.json format.
+    :return: Job ID from beaker metadata file.
+    """
+    json_object = parse_json_parameters(path)
+    return int(json_object["metadata"]["job_id"])
 
 
-class ML_test_metadata():
-    def __init__(self, test_id, type_label: str, correct_result=False, valid=None, threshold=None,
-                 result_value=None):
-        self.type_label = type_label
-        self.test_id = test_id
-        self.valid = valid
-        self.correct_result = correct_result
-        self.threshold = threshold
-        if result_value is not None:
-            self.result_value = float(result_value)
+def get_id_from_pcp_json(path: str) -> int:
+    """
+    Return job id from PCP output file.
+    :param path: Path to file which is in PCP JSON format.
+    :return: Job ID from PCP output.
+    """
+    json_object = parse_json_parameters(path)
+    return int(json_object["id"])
 
-    def as_nice_string(self) -> str:
-        if not self.correct_result:
-            return "ML analysis for test id {} type of {} wasnt done, because something went " \
-                   "wrong.\n".format(self.test_id, self.type_label)
-        if self.valid:
-            return "Seems that entered dataset for test id {} type of {} is valid and " \
-                   "no anomaly founded. Threshold is {} and deviation was {}\n".format(self.test_id,
-                                                                                       self.type_label,
-                                                                                       self.threshold,
-                                                                                       self.result_value)
-        return "Anomaly found for dataset for test id {} type of {}.Threshold is {} and deviation was {}\n".format(
-            self.test_id,
-            self.type_label,
-            self.threshold, self.result_value)
+
+def get_count_of_nodes_from_pcp_json(path: str) -> int:
+    """
+    Return number of nodes from PCP output file.
+    :param path: Path to file which is in PCP JSON format.
+    :return: Number of nodes in PCP output.
+    """
+    json_object = parse_json_parameters(path)
+    return int(len(json_object["nodes"]) - 1)
 
 
 def check_if_file_is_accessible(path: str, mode: str) -> bool:
+    """
+    Check if is file accessible in concrete mode.
+    :param path: Path to file
+    :param mode: Open mode
+    :return: True if accessible, else False
+    """
     try:
         file = open(path, mode)
         file.close()
@@ -660,3 +768,66 @@ def check_if_file_is_accessible(path: str, mode: str) -> bool:
         logger.error(e)
         return False
     return True
+
+
+def get_datasets_for_types(path: str, test_list: List[str], skip_cpus: bool,
+                           skip_memory: bool, job_metadata: JobMetadata,
+                           result: Result =
+                           Result.CORRECT.value) -> List[FinalDataOutput]:
+    """
+    This function provides preparation for saving of data or executing ML analysis. It gets path
+    to file and other parameters and return datasets as list of FinalDataOutput structures.
+    :param path: Path to dataset -> './output20500.json'
+    :param test_list: List with testcases, which we want to save -> ['testcase_1','testcase_2']
+    :param job_metadata: JobMetadata structure with information about entered job dataset.
+    :param skip_cpus: Boolean value if we want to skip cpus type of datasets
+    :param skip_memory:  Boolean value if we want to skip memory type of datasets
+    :param result: Result if dataset is valid or not
+    :return:
+    """
+    datasets = []
+    pcp_output = parse_json_parameters(path)  # return whole element of input
+
+    delete_driver_from_input(pcp_output)  # delete driver node from input
+    clean_output_from_variable_plots(
+        pcp_output)  # clean code from plots with disks, which have variable index of columns
+    extract_mem_ava_to_single_plot(
+        pcp_output)  # extracts mem_ava value from CPUS plot set and creates new set
+
+    job_metadata.init_from_pcp_output(pcp_output)
+    if test_list:
+        job_metadata.filter_tests(test_list)
+    if check_if_valid(PlotNames.MEM_AVAILABLE.value, job_metadata) and not skip_memory:
+        final_memory_output = FinalDataOutput(PlotNames.MEM_AVAILABLE.value,
+                                              output_memory_available_data(job_metadata), result)
+        datasets.append(final_memory_output)
+    if check_if_valid(PlotNames.CPUS.value, job_metadata) and not skip_cpus:
+        try:
+            final_cpu_output = FinalDataOutput(PlotNames.CPUS.value, output_cpu_data(job_metadata),
+                                               result)
+            datasets.append(final_cpu_output)
+        except StealError as e:
+            print(e)
+    return datasets
+
+
+def save_data_for_single_output(path: str, test_list: List[str], output_directory: str, skip_cpus: bool,
+                                skip_memory: bool,
+                                result: Result =
+                        Result.CORRECT.value):
+    """
+    This function gets data for concrete PCP output and saves them by defined format in settings to
+    directory.
+    :param path: Path to dataset -> './output20500.json'
+    :param test_list: List with testcases, which we want to save -> ['testcase_1','testcase_2']
+    :param output_directory: Root output directory for data -> './data'
+    :param skip_cpus: Boolean value if we want to skip cpus type of datasets
+    :param skip_memory:  Boolean value if we want to skip memory type of datasets
+    :param result: Result if dataset is valid or not
+    """
+    job_metadata = JobMetadata()
+    list_with_datasets = get_datasets_for_types(path, test_list, skip_cpus,
+                                                skip_memory, job_metadata,
+                                                result)
+    for dataset in list_with_datasets:
+        write_data(dataset, job_metadata, output_directory)
